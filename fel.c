@@ -194,10 +194,7 @@ void *load_file(const char *name, size_t *size)
 	size_t offset = 0, bufsize = 8192;
 	char *buf = malloc(bufsize);
 	FILE *in;
-	if (strcmp(name, "-") == 0)
-		in = stdin;
-	else
-		in = fopen(name, "rb");
+	in = fopen(name, "rb");
 	if (!in) {
 		perror("Failed to open input file");
 		exit(1);
@@ -218,8 +215,8 @@ void *load_file(const char *name, size_t *size)
 	}
 	if (size) 
 		*size = offset;
-	if (in != stdin)
-		fclose(in);
+	
+	fclose(in);
 	return buf;
 }
 
@@ -237,7 +234,7 @@ void aw_fel_dump(feldev_handle *dev, uint32_t offset, size_t size)
 	if (size > 0) {
 		unsigned char buf[size];
 		aw_fel_read(dev, offset, buf, size);
-		fwrite(buf, size, 1, stdout);
+		//fwrite(buf, size, 1, stdout);
 	}
 }
 void aw_fel_fill(feldev_handle *dev, uint32_t offset, size_t size, unsigned char value)
@@ -1126,335 +1123,67 @@ static bool is_uEnv(void *buffer, size_t size)
 	return memcmp(buffer, "#=uEnv", 6) == 0;
 }
 
-/* private helper function, gets used for "write*" and "multi*" transfers */
-static unsigned int file_upload(feldev_handle *dev, size_t count,
-				size_t argc, char **argv, progress_cb_t callback)
+/*
+ * Functions used by the Flutter-based installer
+ */
+
+void load_spl(void *raw, size_t size, uint8_t *buf)
 {
-	if (argc < count * 2)
-		pr_fatal("error: too few arguments for uploading %zu files\n",
-			 count);
+	feldev_handle *dev = (feldev_handle *)raw;
+	uint32_t offset;
+	const char *dt_name = spl_get_dtb_name(buf);
 
-	/* get all file sizes, keeping track of total bytes */
-	size_t size = 0;
-	unsigned int i;
-	for (i = 0; i < count; i++)
-		size += file_size(argv[i * 2 + 1]);
+	/* write and execute the SPL from the buffer */
+	offset = aw_fel_write_and_execute_spl(dev, buf, size);
 
-	progress_start(callback, size); /* set total size and progress callback */
-
-	/* now transfer each file in turn */
-	for (i = 0; i < count; i++) {
-		void *buf = load_file(argv[i * 2 + 1], &size);
-		if (size > 0) {
-			uint32_t offset = strtoul(argv[i * 2], NULL, 0);
-			aw_write_buffer(dev, buf, offset, size, callback != NULL);
-
-			/* If we transferred a script, try to inform U-Boot about its address. */
-			if (get_image_type(buf, size) == IH_TYPE_SCRIPT)
-				pass_fel_information(dev, offset, 0);
-			if (is_uEnv(buf, size)) /* uEnv-style data */
-				pass_fel_information(dev, offset, size);
-		}
-		free(buf);
+	/* check for optional main U-Boot binary (and transfer it, if applicable) */
+	if (size > offset) {
+		/* U-Boot pads to at least 32KB */
+		if (offset < SPL_MIN_OFFSET)
+			offset = SPL_MIN_OFFSET;
+		aw_fel_write_uboot_image(dev, buf + offset, size - offset,
+					 dt_name);
 	}
-
-	return i; /* return number of files that were processed */
+	free(buf);
 }
 
-static void felusb_list_devices(void)
+int write_to_memory(void *raw, size_t offset, size_t size, void *buf)
 {
-	size_t devices; /* FEL device count */
-	feldev_list_entry *list, *entry;
+	feldev_handle *dev = (feldev_handle *)raw;
+	
+	if (size > 0) {
+		aw_write_buffer(dev, buf, offset, size, false);
 
-	list = list_fel_devices(&devices);
-	for (entry = list; entry->soc_version.soc_id; entry++) {
-		printf("USB device %03d:%03d   Allwinner %-8s",
-			entry->busnum, entry->devnum, entry->soc_name);
-		/* output SID only if non-zero */
-		if (entry->SID[0] | entry->SID[1] | entry->SID[2] | entry->SID[3])
-			printf("%08x:%08x:%08x:%08x",
-			       entry->SID[0], entry->SID[1], entry->SID[2], entry->SID[3]);
-		putchar('\n');
+		/* If we transferred a script, try to inform U-Boot about its address. */
+		if (get_image_type(buf, size) == IH_TYPE_SCRIPT)
+			pass_fel_information(dev, offset, 0);
+		if (is_uEnv(buf, size)) /* uEnv-style data */
+			pass_fel_information(dev, offset, size);
 	}
-	free(list);
 
-	if (verbose && devices == 0)
-		pr_error("No Allwinner devices in FEL mode detected.\n");
+	free(buf);
 
-	feldev_done(NULL);
-	exit(devices > 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+	return 0; /* return number of files that were processed */
 }
 
-static void select_by_sid(const char *sid_arg, int *busnum, int *devnum)
-{
-	char sid[36];
-	feldev_list_entry *list, *entry;
-
-	list = list_fel_devices(NULL);
-	for (entry = list; entry->soc_version.soc_id; entry++) {
-		snprintf(sid, sizeof(sid), "%08x:%08x:%08x:%08x",
-			entry->SID[0], entry->SID[1], entry->SID[2], entry->SID[3]);
-		if (strcmp(sid, sid_arg) == 0) {
-			*busnum = entry->busnum;
-			*devnum = entry->devnum;
-			break;
-		}
-	}
-	free(list);
+int reboot_device(void *raw) {
+	feldev_handle *dev = (feldev_handle *)raw;
+	aw_rmr_request(dev, 0x44000, true);
+	return 0;
 }
 
-void usage(const char *cmd) {
-	puts("sunxi-fel " VERSION "\n");
-	printf("Usage: %s [options] command arguments... [command...]\n"
-		"	-h, --help			Print this usage summary and exit\n"
-		"	-v, --verbose			Verbose logging\n"
-		"	-p, --progress			\"write\" transfers show a progress bar\n"
-		"	-l, --list			Enumerate all (USB) FEL devices and exit\n"
-		"	-d, --dev bus:devnum		Use specific USB bus and device number\n"
-		"	    --sid SID			Select device by SID key (exact match)\n"
-		"\n"
-		"	spl file			Load and execute U-Boot SPL\n"
-		"		If file additionally contains a main U-Boot binary\n"
-		"		(u-boot-sunxi-with-spl.bin), this command also transfers that\n"
-		"		to memory (default address from image), but won't execute it.\n"
-		"\n"
-		"	uboot file-with-spl		like \"spl\", but actually starts U-Boot\n"
-		"		U-Boot execution will take place when the fel utility exits.\n"
-		"		This allows combining \"uboot\" with further \"write\" commands\n"
-		"		(to transfer other files needed for the boot).\n"
-		"\n"
-		"	hex[dump] address length	Dumps memory region in hex\n"
-		"	dump address length		Binary memory dump\n"
-		"	exe[cute] address		Call function address\n"
-		"	reset64 address			RMR request for AArch64 warm boot\n"
-		"	wdreset				Reboot via watchdog\n"
-		"	memmove dest source size	Copy <size> bytes within device memory\n"
-		"	readl address			Read 32-bit value from device memory\n"
-		"	writel address value		Write 32-bit value to device memory\n"
-		"	read address length file	Write memory contents into file\n"
-		"	write address file		Store file contents into memory\n"
-		"	write-with-progress addr file	\"write\" with progress bar\n"
-		"	write-with-gauge addr file	Output progress for \"dialog --gauge\"\n"
-		"	write-with-xgauge addr file	Extended gauge output (updates prompt)\n"
-		"	multi[write] # addr file ...	\"write-with-progress\" multiple files,\n"
-		"					sharing a common progress status\n"
-		"	multi[write]-with-gauge ...	like their \"write-with-*\" counterpart,\n"
-		"	multi[write]-with-xgauge ...	  but following the 'multi' syntax:\n"
-		"					  <#> addr file [addr file [...]]\n"
-		"	echo-gauge \"some text\"		Update prompt/caption for gauge output\n"
-		"	ver[sion]			Show BROM version\n"
-		"	sid				Retrieve and output 128-bit SID key\n"
-		"	clear address length		Clear memory\n"
-		"	fill address length value	Fill memory\n"
-		, cmd);
-	printf("\n");
-	aw_fel_spiflash_help();
-	exit(0);
-}
-
-int main(int argc, char **argv)
-{
-	bool uboot_autostart = false; /* flag for "uboot" command = U-Boot autostart */
-	bool pflag_active = false; /* -p switch, causing "write" to output progress */
-	bool device_list = false; /* -l switch, prints device list and exits */
-	feldev_handle *handle;
-	int busnum = -1, devnum = -1;
-	char *sid_arg = NULL;
-
-	if (argc <= 1)
-		usage(argv[0]);
-
-	/* process all "prefix"-type arguments first */
-	while (argc > 1) {
-		if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)
-			usage(argv[0]);
-		else if (strcmp(argv[1], "--verbose") == 0 || strcmp(argv[1], "-v") == 0)
-			verbose = true;
-		else if (strcmp(argv[1], "--progress") == 0 || strcmp(argv[1], "-p") == 0)
-			pflag_active = true;
-		else if (strcmp(argv[1], "--list") == 0 || strcmp(argv[1], "-l") == 0
-			 || strcmp(argv[1], "list") == 0)
-			device_list = true;
-		else if (strncmp(argv[1], "--dev", 5) == 0 || strncmp(argv[1], "-d", 2) == 0) {
-			char *dev_arg = argv[1];
-			dev_arg += strspn(dev_arg, "-dev="); /* skip option chars, ignore '=' */
-			if (*dev_arg == 0 && argc > 2) { /* at end of argument, use the next one instead */
-				dev_arg = argv[2];
-				argc -= 1;
-				argv += 1;
-			}
-			if (sscanf(dev_arg, "%d:%d", &busnum, &devnum) != 2
-			    || busnum <= 0 || devnum <= 0)
-				pr_fatal("ERROR: Expected 'bus:devnum', got '%s'.\n", dev_arg);
-			pr_info("Selecting USB Bus %03d Device %03d\n", busnum, devnum);
-		}
-		else if (strcmp(argv[1], "--sid") == 0 && argc > 2) {
-			sid_arg = argv[2];
-			argc -= 1;
-			argv += 1;
-		} else
-			break; /* no valid (prefix) option detected, exit loop */
-		argc -= 1;
-		argv += 1;
-	}
-
-	/*
-	 * If any option-style arguments remain (starting with '-') we know that
-	 * we won't recognize them later (at best yielding "Invalid command").
-	 * However this would only happen _AFTER_ trying to open a FEL device,
-	 * which might fail with "Allwinner USB FEL device not found". To avoid
-	 * confusing the user, bail out here - with a more descriptive message.
-	 */
-	int i;
-	for (i = 1; i < argc; i++)
-		if (*argv[i] == '-')
-			pr_fatal("Invalid option %s\n", argv[i]);
-
-	/* Process options that don't require a FEL device handle */
-	if (device_list)
-		felusb_list_devices(); /* and exit program afterwards */
-	if (sid_arg) {
-		/* try to set busnum and devnum according to "--sid" option */
-		select_by_sid(sid_arg, &busnum, &devnum);
-		if (busnum <= 0 || devnum <= 0)
-			pr_fatal("No matching FEL device found for SID '%s'\n",
-				 sid_arg);
-		pr_info("Selecting FEL device %03d:%03d by SID\n", busnum, devnum);
-	}
-
-	/*
-	 * Open FEL device - either specified by busnum:devnum, or
-	 * the first one matching the given USB vendor/procduct ID.
-	 */
-	handle = feldev_open(busnum, devnum, AW_USB_VENDOR_ID, AW_USB_PRODUCT_ID);
+void *open_feldev_handle() {
+	feldev_handle *dev = feldev_open(-1, -1, AW_USB_VENDOR_ID, AW_USB_PRODUCT_ID);
+	if (!dev)
+		return NULL;
 
 	/* Some SoCs need the SMC workaround to enter the secure boot mode */
-	aw_apply_smc_workaround(handle);
+	aw_apply_smc_workaround(dev);
 
-	/* Handle command-style arguments, in order of appearance */
-	while (argc > 1 ) {
-		int skip = 1;
+	return (void *)dev;
+}
 
-		if (strncmp(argv[1], "hex", 3) == 0 && argc > 3) {
-			aw_fel_hexdump(handle, strtoul(argv[2], NULL, 0), strtoul(argv[3], NULL, 0));
-			skip = 3;
-		} else if (strncmp(argv[1], "dump", 4) == 0 && argc > 3) {
-			aw_fel_dump(handle, strtoul(argv[2], NULL, 0), strtoul(argv[3], NULL, 0));
-			skip = 3;
-		} else if (strcmp(argv[1], "memmove") == 0 && argc > 4) {
-			/* three parameters: destination addr, source addr, byte count */
-			fel_memmove(handle, strtoul(argv[2], NULL, 0),
-				    strtoul(argv[3], NULL, 0), strtoul(argv[4], NULL, 0));
-			skip = 4;
-		} else if (strcmp(argv[1], "readl") == 0 && argc > 2) {
-			printf("0x%08x\n", fel_readl(handle, strtoul(argv[2], NULL, 0)));
-			skip = 2;
-		} else if (strcmp(argv[1], "writel") == 0 && argc > 3) {
-			fel_writel(handle, strtoul(argv[2], NULL, 0), strtoul(argv[3], NULL, 0));
-			skip = 3;
-		} else if (strncmp(argv[1], "exe", 3) == 0 && argc > 2) {
-			aw_fel_execute(handle, strtoul(argv[2], NULL, 0));
-			skip=3;
-		} else if (strcmp(argv[1], "reset64") == 0 && argc > 2) {
-			aw_rmr_request(handle, strtoul(argv[2], NULL, 0), true);
-			/* Cancel U-Boot autostart, and stop processing args */
-			uboot_autostart = false;
-			break;
-		} else if (strcmp(argv[1], "wdreset") == 0) {
-			aw_wd_reset(handle);
-		} else if (strncmp(argv[1], "ver", 3) == 0) {
-			aw_fel_print_version(handle);
-		} else if (strcmp(argv[1], "sid") == 0) {
-			aw_fel_print_sid(handle, false);
-		} else if (strcmp(argv[1], "sid-registers") == 0) {
-			aw_fel_print_sid(handle, true); /* enforce register access */
-		} else if (strcmp(argv[1], "write") == 0 && argc > 3) {
-			skip += 2 * file_upload(handle, 1, argc - 2, argv + 2,
-					pflag_active ? progress_bar : NULL);
-		} else if (strcmp(argv[1], "write-with-progress") == 0 && argc > 3) {
-			skip += 2 * file_upload(handle, 1, argc - 2, argv + 2,
-						progress_bar);
-		} else if (strcmp(argv[1], "write-with-gauge") == 0 && argc > 3) {
-			skip += 2 * file_upload(handle, 1, argc - 2, argv + 2,
-						progress_gauge);
-		} else if (strcmp(argv[1], "write-with-xgauge") == 0 && argc > 3) {
-			skip += 2 * file_upload(handle, 1, argc - 2, argv + 2,
-						progress_gauge_xxx);
-		} else if ((strcmp(argv[1], "multiwrite") == 0 ||
-			    strcmp(argv[1], "multi") == 0) && argc > 4) {
-			size_t count = strtoul(argv[2], NULL, 0); /* file count */
-			skip = 2 + 2 * file_upload(handle, count, argc - 3,
-						   argv + 3, progress_bar);
-		} else if ((strcmp(argv[1], "multiwrite-with-gauge") == 0 ||
-			    strcmp(argv[1], "multi-with-gauge") == 0) && argc > 4) {
-			size_t count = strtoul(argv[2], NULL, 0); /* file count */
-			skip = 2 + 2 * file_upload(handle, count, argc - 3,
-						   argv + 3, progress_gauge);
-		} else if ((strcmp(argv[1], "multiwrite-with-xgauge") == 0 ||
-			    strcmp(argv[1], "multi-with-xgauge") == 0) && argc > 4) {
-			size_t count = strtoul(argv[2], NULL, 0); /* file count */
-			skip = 2 + 2 * file_upload(handle, count, argc - 3,
-						   argv + 3, progress_gauge_xxx);
-		} else if ((strcmp(argv[1], "echo-gauge") == 0) && argc > 2) {
-			skip = 2;
-			printf("XXX\n0\n%s\nXXX\n", argv[2]);
-			fflush(stdout);
-		} else if (strcmp(argv[1], "read") == 0 && argc > 4) {
-			size_t size = strtoul(argv[3], NULL, 0);
-			void *buf = malloc(size);
-			aw_fel_read(handle, strtoul(argv[2], NULL, 0), buf, size);
-			save_file(argv[4], buf, size);
-			free(buf);
-			skip=4;
-		} else if (strcmp(argv[1], "clear") == 0 && argc > 2) {
-			aw_fel_fill(handle, strtoul(argv[2], NULL, 0), strtoul(argv[3], NULL, 0), 0);
-			skip=3;
-		} else if (strcmp(argv[1], "fill") == 0 && argc > 3) {
-			aw_fel_fill(handle, strtoul(argv[2], NULL, 0), strtoul(argv[3], NULL, 0), (unsigned char)strtoul(argv[4], NULL, 0));
-			skip=4;
-		} else if (strcmp(argv[1], "spl") == 0 && argc > 2) {
-			aw_fel_process_spl_and_uboot(handle, argv[2]);
-			skip=2;
-		} else if (strcmp(argv[1], "uboot") == 0 && argc > 2) {
-			aw_fel_process_spl_and_uboot(handle, argv[2]);
-			uboot_autostart = (uboot_entry > 0 && uboot_size > 0);
-			if (!uboot_autostart)
-				printf("Warning: \"uboot\" command failed to detect image! Can't execute U-Boot.\n");
-			skip=2;
-		} else if (strcmp(argv[1], "spiflash-info") == 0) {
-			aw_fel_spiflash_info(handle);
-		} else if (strcmp(argv[1], "spiflash-read") == 0 && argc > 4) {
-			size_t size = strtoul(argv[3], NULL, 0);
-			void *buf = malloc(size);
-			aw_fel_spiflash_read(handle, strtoul(argv[2], NULL, 0), buf, size,
-					     pflag_active ? progress_bar : NULL);
-			save_file(argv[4], buf, size);
-			free(buf);
-			skip=4;
-		} else if (strcmp(argv[1], "spiflash-write") == 0 && argc > 3) {
-			size_t size;
-			void *buf = load_file(argv[3], &size);
-			aw_fel_spiflash_write(handle, strtoul(argv[2], NULL, 0), buf, size,
-					      pflag_active ? progress_bar : NULL);
-			free(buf);
-			skip=3;
-		} else {
-			pr_fatal("Invalid command %s\n", argv[1]);
-		}
-		argc-=skip;
-		argv+=skip;
-	}
-
-	/* auto-start U-Boot if requested (by the "uboot" command) */
-	if (uboot_autostart) {
-		pr_info("Starting U-Boot (0x%08X).\n", uboot_entry);
-		if (enter_in_aarch64)
-			aw_rmr_request(handle, uboot_entry, true);
-		else
-			aw_fel_execute(handle, uboot_entry);
-	}
-
-	feldev_done(handle);
-
-	return 0;
+void close_feldev_handle(void *raw) {
+	feldev_handle *dev = (feldev_handle *)raw;
+	feldev_done(dev);
 }

@@ -40,7 +40,7 @@
 #endif
 
 /** shortcut to "printf to stderr" */
-#define pr_error(...)	fprintf(stderr, __VA_ARGS__)
+#define pr_error(...)	do { } while (0);
 /** like pr_error(), but also exit program */
 #define pr_fatal(...) \
 	do { pr_error(__VA_ARGS__); exit(EXIT_FAILURE); } while (0);

@@ -510,8 +510,6 @@ void aw_fel_spiflash_write(feldev_handle *dev,
 	spi_flash_info_t *flash_info = &default_spi_flash_info; /* FIXME */
 
 	if ((offset % flash_info->small_erase_size) != 0) {
-		fprintf(stderr, "aw_fel_spiflash_write: 'addr' must be %d bytes aligned\n",
-		        flash_info->small_erase_size);
 		exit(1);
 	}
 

@@ -31,6 +31,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#undef fprintf
+#define fprintf(...) do { } while (0);
+
 #define USB_TIMEOUT	10000 /* 10 seconds */
 
 static bool fel_lib_initialized = false;
@@ -46,8 +49,6 @@ struct _felusb_handle {
 /* a helper function to report libusb errors */
 static void usb_error(int rc, const char *caption, int exitcode)
 {
-	if (caption)
-		fprintf(stderr, "%s ", caption);
 
 #if defined(LIBUSBX_API_VERSION) && (LIBUSBX_API_VERSION >= 0x01000102)
 	fprintf(stderr, "ERROR %d: %s\n", rc, libusb_strerror(rc));

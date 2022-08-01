@@ -20,6 +20,15 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#define SHOW_TEXT
+
+#ifdef SHOW_TEXT
+#define yf_printf printf
+#else
+#define yf_printf(__VA_ARGS__, ...) \
+	do {} while (0)
+#endif
+
 /* Less reliable than clock_gettime, but does not require linking with -lrt */
 inline double gettime(void)
 {
@@ -108,16 +117,14 @@ void progress_bar(size_t total, size_t done)
 	double speed = rate(done, progress_elapsed());
 	double eta = estimate(total - done, speed);
 
-	printf("\r%3.0f%% [", ratio * 100); /* current percentage */
+	yf_printf("\r%3.0f%% [", ratio * 100); /* current percentage */
 	for (i = 0; i < pos; i++) putchar('=');
 	for (i = pos; i < WIDTH; i++) putchar(' ');
 	if (done < total)
-		printf("]%6.1f kB/s, ETA %s ", kilo(speed), format_ETA(eta));
+		yf_printf("]%6.1f kB/s, ETA %s ", kilo(speed), format_ETA(eta));
 	else
 		/* transfer complete, output totals plus a newline */
-		printf("] %5.0f kB, %6.1f kB/s\n", kilo(done), kilo(speed));
-
-	fflush(stdout);
+		yf_printf("] %5.0f kB, %6.1f kB/s\n", kilo(done), kilo(speed));
 }
 
 /*
@@ -131,8 +138,7 @@ void progress_bar(size_t total, size_t done)
 void progress_gauge(size_t total, size_t done)
 {
 	if (total > 0) {
-		printf("%.0f\n", (float)done / total * 100);
-		fflush(stdout);
+		yf_printf("%.0f\n", (float)done / total * 100);
 	}
 }
 
@@ -151,15 +157,14 @@ void progress_gauge_xxx(size_t total, size_t done)
 	if (total > 0) {
 		double speed = rate(done, progress_elapsed());
 		double eta = estimate(total - done, speed);
-		printf("XXX\n");
-		printf("%.0f\n", (float)done / total * 100);
+		yf_printf("XXX\n");
+		yf_printf("%.0f\n", (float)done / total * 100);
 		if (done < total)
-			printf("%zu of %zu, %.1f kB/s, ETA %s\n",
+			yf_printf("%zu of %zu, %.1f kB/s, ETA %s\n",
 				done, total, kilo(speed), format_ETA(eta));
 		else
-			printf("Done: %.1f kB, at %.1f kB/s\n",
+			yf_printf("Done: %.1f kB, at %.1f kB/s\n",
 				kilo(done), kilo(speed));
-		printf("XXX\n");
-		fflush(stdout);
+		yf_printf("XXX\n");
 	}
 }
