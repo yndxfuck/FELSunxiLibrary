@@ -1127,11 +1127,15 @@ static bool is_uEnv(void *buffer, size_t size)
  * Functions used by the Flutter-based installer
  */
 
-void load_spl(void *raw, size_t size, uint8_t *buf)
+int load_spl(void *raw, size_t size, uint8_t *buf)
 {
 	feldev_handle *dev = (feldev_handle *)raw;
 	uint32_t offset;
-	const char *dt_name = spl_get_dtb_name(buf);
+	const char *dt_name;
+	if (!dev || size <= 0 || !buf)
+		return -1;
+
+	dt_name = spl_get_dtb_name(buf);
 
 	/* write and execute the SPL from the buffer */
 	offset = aw_fel_write_and_execute_spl(dev, buf, size);
@@ -1145,11 +1149,14 @@ void load_spl(void *raw, size_t size, uint8_t *buf)
 					 dt_name);
 	}
 	free(buf);
+	return 0;
 }
 
 int write_to_memory(void *raw, size_t offset, size_t size, void *buf)
 {
 	feldev_handle *dev = (feldev_handle *)raw;
+	if (!dev || size <= 0 || !buf)
+		return -1;
 	
 	if (size > 0) {
 		aw_write_buffer(dev, buf, offset, size, false);
@@ -1163,11 +1170,14 @@ int write_to_memory(void *raw, size_t offset, size_t size, void *buf)
 
 	free(buf);
 
-	return 0; /* return number of files that were processed */
+	return 0;
 }
 
 int reboot_device(void *raw) {
 	feldev_handle *dev = (feldev_handle *)raw;
+	if (!dev)
+		return -1;
+
 	aw_rmr_request(dev, 0x44000, true);
 	return 0;
 }
@@ -1185,5 +1195,8 @@ void *open_feldev_handle() {
 
 void close_feldev_handle(void *raw) {
 	feldev_handle *dev = (feldev_handle *)raw;
+	if (!dev)
+		return;
+
 	feldev_done(dev);
 }
