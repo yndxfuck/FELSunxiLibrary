@@ -691,13 +691,13 @@ feldev_handle *feldev_open(int busnum, int devnum,
 	feldev_handle *result = calloc(1, sizeof(feldev_handle));
 	if (!result) {
 		fprintf(stderr, "FAILED to allocate feldev_handle memory.\n");
-		exit(1);
+		return NULL;
 	}
 	result->usb = calloc(1, sizeof(felusb_handle));
 	if (!result->usb) {
 		fprintf(stderr, "FAILED to allocate felusb_handle memory.\n");
 		free(result);
-		exit(1);
+		return NULL;
 	}
 
 	if (busnum < 0 || devnum < 0) {
@@ -715,7 +715,7 @@ feldev_handle *feldev_open(int busnum, int devnum,
 				fprintf(stderr, "ERROR: Allwinner USB FEL device not found!\n");
 				break;
 			}
-			exit(1);
+			return NULL;
 		}
 	} else {
 		/* look for specific bus and device number */
@@ -737,7 +737,7 @@ feldev_handle *feldev_open(int busnum, int devnum,
 					fprintf(stderr, "ERROR: Bus %03d Device %03d not a FEL device "
 						"(expected %04x:%04x, got %04x:%04x)\n", busnum, devnum,
 						vendor_id, product_id, desc.idVendor, desc.idProduct);
-					exit(1);
+					return NULL;
 				}
 				/* open handle to this specific device (incrementing its refcount) */
 				rc = libusb_open(list[i], &result->usb->handle);
@@ -751,7 +751,7 @@ feldev_handle *feldev_open(int busnum, int devnum,
 		if (!found) {
 			fprintf(stderr, "ERROR: Bus %03d Device %03d not found in libusb device list\n",
 				busnum, devnum);
-			exit(1);
+			return NULL;
 		}
 	}
 
@@ -821,7 +821,7 @@ feldev_list_entry *list_fel_devices(size_t *count)
 	list = calloc(rc + 1, sizeof(feldev_list_entry));
 	if (!list) {
 		fprintf(stderr, "list_fel_devices() FAILED to allocate list memory.\n");
-		exit(1);
+		return NULL;
 	}
 
 	for (i = 0; i < rc; i++) {

@@ -182,7 +182,7 @@ int save_file(const char *name, void *data, size_t size)
 	int rc;
 	if (!out) {
 		perror("Failed to open output file");
-		exit(1);
+		return -1;
 	}
 	rc = fwrite(data, size, 1, out);
 	fclose(out);
@@ -197,7 +197,7 @@ void *load_file(const char *name, size_t *size)
 	in = fopen(name, "rb");
 	if (!in) {
 		perror("Failed to open input file");
-		exit(1);
+		return NULL;
 	}
 	
 	while (true) {
@@ -210,7 +210,7 @@ void *load_file(const char *name, size_t *size)
 		buf = realloc(buf, bufsize);
 		if (!buf) {
 			perror("Failed to resize load_file() buffer");
-			exit(1);
+			return NULL;
 		}
 	}
 	if (size) 
@@ -893,7 +893,7 @@ static void aw_fel_write_uboot_image(feldev_handle *dev, uint8_t *buf,
 			pr_error("Invalid U-Boot image: error code %d\n",
 				 image_type);
 		}
-		exit(1);
+		return;
 	}
 	if (image_type == IH_TYPE_FLATDT) {		/* FIT image */
 		uboot_entry = load_fit_images(dev, buf, dt_name,
