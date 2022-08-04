@@ -57,4 +57,4 @@ PROGRESS := progress.c progress.h
 
 libsunxifel.so: fel.c fit_image.c thunks/fel-to-spl-thunk.h $(PROGRESS) $(SOC_INFO) $(FEL_LIB) $(SPI_FLASH)
 	$(CC) -shared $(HOST_CFLAGS) $(LIBUSB_CFLAGS) $(ZLIB_CFLAGS) $(LDFLAGS) -o $@ \
-		$(filter %.c,$^) $(LIBS) libs/libusb-1.0.a libs/libssl.a libs/libcrypto.a libs/libz.a libs/libfdt.a -fPIC
+		$(filter %.c,$^) $(LIBS) libs/libusb-1.0.a libs/libssl.a libs/libcrypto.a libs/libz.a libs/libfdt.a -ludev -fPIC
