@@ -37,6 +37,9 @@ PKG_CONFIG ?= pkg-config
 MKSUNXIBOOT ?= mksunxiboot
 PATH_DIRS := $(shell echo $$PATH | sed -e 's/:/ /g')
 
+FLUTTER_PATH := $(shell echo $$HOME)/flutter
+DART_SDK_PATH := $(FLUTTER_PATH)/bin/cache/dart-sdk
+
 # Try to guess a suitable default ARM cross toolchain
 CROSS_DEFAULT := arm-none-eabi-
 CROSS_COMPILE ?= $(or $(shell ./find-arm-gcc.sh),$(CROSS_DEFAULT))
@@ -55,6 +58,11 @@ FEL_LIB  := fel_lib.c fel_lib.h
 SPI_FLASH:= fel-spiflash.c fel-spiflash.h fel-remotefunc-spi-data-transfer.h
 PROGRESS := progress.c progress.h
 
-libsunxifel.so: fel.c fit_image.c thunks/fel-to-spl-thunk.h $(PROGRESS) $(SOC_INFO) $(FEL_LIB) $(SPI_FLASH)
+libsunxifel.so: fel.c fit_image.c thunks/fel-to-spl-thunk.h \
+				$(PROGRESS) $(SOC_INFO) $(FEL_LIB) $(SPI_FLASH) \
+				$(DART_SDK_PATH)/include/dart_api_dl.c yfdart.c
 	$(CC) -shared $(HOST_CFLAGS) $(LIBUSB_CFLAGS) $(ZLIB_CFLAGS) $(LDFLAGS) -o $@ \
-		$(filter %.c,$^) $(LIBS) libs/libusb-1.0.a libs/libssl.a libs/libcrypto.a libs/libz.a libs/libfdt.a -ludev -fPIC
+		$(filter %.c,$^) $(LIBS) \
+		libs/libusb-1.0.a libs/libssl.a libs/libcrypto.a libs/libz.a libs/libfdt.a \
+		-ludev -lpthread -fPIC \
+		-I$(DART_SDK_PATH)/include

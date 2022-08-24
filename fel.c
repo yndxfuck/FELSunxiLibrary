@@ -32,6 +32,9 @@
 #include <zlib.h>
 #include <sys/stat.h>
 
+#include "yfdart.h"
+#include "pthread.h"
+
 bool verbose = false; /* If set, makes the 'fel' tool more talkative */
 static uint32_t uboot_entry = 0; /* entry point (address) of U-Boot */
 static uint32_t uboot_size  = 0; /* size of U-Boot binary */
@@ -1124,7 +1127,7 @@ static bool is_uEnv(void *buffer, size_t size)
 }
 
 /*
- * Functions used by the Flutter-based installer
+ * Functions used by the wrappers
  */
 
 int load_spl(void *raw, size_t size, uint8_t *buf)
@@ -1199,4 +1202,69 @@ void close_feldev_handle(void *raw) {
 		return;
 
 	feldev_done(dev);
+}
+
+struct _dart_multifunc_data {
+	Dart_Port_DL port;
+	void *feldev;
+	size_t size;
+	size_t offset;
+	uint8_t *buf;
+};
+
+/*
+ * YFDart wrappers
+ */
+
+ void *_load_spl_async(void *data) {
+	struct _dart_multifunc_data *arg =
+		(struct _dart_multifunc_data *)data;
+	struct yfdart_connection *con = 
+		malloc(sizeof(struct yfdart_connection));
+	yfdart_attach_port(con, arg->port);
+	int ret = yfdart_start_connection(con);
+	if (ret < 0)
+		printf("failed to establish connection: %d\n", ret);
+	ret = load_spl(arg->feldev, arg->size, arg->buf);
+	ret = yfdart_end_connection(&con, ret);
+	pthread_exit(NULL);
+}
+
+void *_write_to_memory_async(void *data) {
+	struct _dart_multifunc_data *arg =
+		(struct _dart_multifunc_data *)data;
+	struct yfdart_connection *con = 
+		malloc(sizeof(struct yfdart_connection));
+	yfdart_attach_port(con, arg->port);
+	int ret = yfdart_start_connection(con);
+	if (ret < 0)
+		printf("failed to establish connection: %d\n", ret);
+	ret = write_to_memory(arg->feldev, arg->offset, arg->size, arg->buf);
+	ret = yfdart_end_connection(&con, ret);
+	pthread_exit(NULL);
+}
+
+void load_spl_async(Dart_Port_DL port, void *raw, size_t size, uint8_t *buf) {
+	pthread_t t;
+	struct _dart_multifunc_data *arg = 
+		malloc(sizeof(struct _dart_multifunc_data));
+	memset(arg, 0, sizeof(struct _dart_multifunc_data));
+	arg->feldev = raw;
+	arg->size = size;
+	arg->buf = buf;
+	arg->port = port;
+	pthread_create(&t, NULL, _load_spl_async, arg);
+}
+
+void write_to_memory_async(Dart_Port_DL port,
+						   void *raw, size_t offset, size_t size, void *buf) {
+	pthread_t t;
+	struct _dart_multifunc_data *arg = 
+		malloc(sizeof(struct _dart_multifunc_data));
+	arg->feldev = raw;
+	arg->size = size;
+	arg->buf = buf;
+	arg->offset = offset;
+	arg->port = port;
+	pthread_create(&t, NULL, _write_to_memory_async, arg);
 }
