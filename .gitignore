@@ -1,3 +1,4 @@
 *.o
 *.swp
 libsunxifel.so
+libs
