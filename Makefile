@@ -19,7 +19,7 @@
 # Windows predefines OS in the environment (to "Windows_NT"), otherwise use uname
 OS ?= $(shell uname)
 
-CC ?= gcc
+CC := gcc-11
 DEFAULT_CFLAGS := -std=c99
 DEFAULT_CFLAGS += -Wall -Wextra -Wno-unused-result
 
